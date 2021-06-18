@@ -4,15 +4,19 @@ After=network.target multi-user.target
 
 [Service]
 Type=forking
-EnvironmentFile=-/etc/default/named
+EnvironmentFile=-/etc/sysconfig/named
 Environment=KRB5_KTNAME=/etc/named.keytab
 PIDFile=/usr/local/bind/var/run/named/named.pid
+
 ExecStartPre=/usr/lib/generate-rndc-key.sh
 ExecStartPre=/usr/local/bind/sbin/named-checkconf -z /usr/local/bind/etc/named.conf
-#ExecStart=/usr/local/bind/sbin/named -u named -n 4
 ExecStart=/usr/local/bind/sbin/named $OPTIONS
+ExecStartPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns start"
+
 ExecReload=/bin/sh -c '/usr/local/bind/sbin/rndc reload > /dev/null 2>&1 || /bin/kill -HUP $MAINPID'
+
 ExecStop=/bin/sh -c '/usr/local/bind/sbin/rndc stop > /dev/null 2>&1 || /bin/kill -TERM $MAINPID'
+ExecStopPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns stop"
 PrivateTmp=true
 
 Restart=on-failure
@@ -20,3 +24,4 @@ RestartSec=15s
 
 [Install]
 WantedBy=multi-user.target
+

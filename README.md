@@ -2,6 +2,12 @@
 
 This document is description ow to set up auth/cache dns server on debian10, bind 9.11.x with dlz and Mysql backend plus snort and fail2ban. Zone transfer is achieved by standard MySQL replication.
 
+Theoretical situation for this example as follow:
+
+Company dev.null has got domain dev.null registered and two subdomains *sys.dev.null* in 192.168.11.0/24 - for internal communication and *mysql.dev.null* specifically separated network for mysql communication in 192.168.12.0/24.
+
+The two subdomains can not be queried from outside of company as contains information about internal infrastructure.
+
 *In this example dnssec is not used.*
 
 # OS prep
@@ -104,168 +110,9 @@ create directiories
     chown named:named /usr/local/bind/var/named ;
     }
 
-example named.conf
-    
-    include "/usr/local/bind/etc/rndc.key";
-    
-    controls {
-            inet 127.0.0.1 port 953
-            allow { 127.0.0.1; } keys { "rndc-key"; };
-    };
-    
-    
-    acl blockednets { 0.0.0.0/8;
-    		192.0.2.0/24;
-    		224.0.0.0/3;
-    		10.0.0.0/9;
-    		10.128.0.0/10;
-    		10.192.0.0/11;
-    		10.224.0.0/12;
-    		10.240.0.0/13;
-    		10.248.0.0/14;
-    		10.252.0.0/15;
-    		10.254.0.0/16;
-    		172.16.0.0/12;
-    		192.168.0.0/16;
-    		};
-    	
-    
-    key "rndc-key" {
-    	algorithm hmac-md5;
-    	secret "2+mTfTxNhm3fI1NHuPMukQ==";
-    	};
-    
-    controls {
-    	inet 127.0.0.1 port 953
-    		allow { 127.0.0.1; } keys { "rndc-key"; };
-    	};
-    
-    
-    options {
-    
-    statistics-file "/usr/local/bind/var/log/named.stats";
-    directory "/usr/local/bind/var/named";
-    zone-statistics yes;
-    listen-on-v6 { any; };
-    listen-on { any; };
-    minimal-responses  no;
-    additional-from-auth yes;
-    additional-from-cache yes;
-    version "PowerDNS 3.4.5";
-    blackhole { blockednets; };
-    
-    
-    rate-limit {
-        ipv4-prefix-length 32;
-        ipv6-prefix-length 56;
-        window 10;
-        responses-per-second 25;
-        referrals-per-second 5;
-        errors-per-second 5;
-        nxdomains-per-second 25;
-        slip 2;
-        exempt-clients {
-            192.168.4.0/23;
-            192.168.50.0/24;
-            };
-    };
-    
-    
-    };
-    
-    logging {
-    
-    	channel bind_syslog_l1 {
-    	    syslog local1;
-    	    severity dynamic;
-    	    print-category yes;
-    	    print-time no;
-    	    print-severity yes;
-    	    };
-    
-    	channel ratelimitlog {
-    	    file "/var/log/bind/bind_ratelimit.log" versions 3 size 50m;
-    	    severity dynamic;
-    	    print-category yes;
-    	    print-time yes;
-    	    print-severity yes;
-    	    };
-    
-    	channel transferlog {
-    	    file "/var/log/bind/bind_transfer.log" versions 3 size 5m;
-    	    severity dynamic;
-    	    print-category yes;
-    	    print-time yes;
-    	    print-severity yes;
-    	    };
-    
-    category security { bind_syslog_l1; };
-    category xfer-out { transferlog; };
-    category xfer-in { transferlog; };
-    category rate-limit { ratelimitlog; };
-    };
-    
-    
-    view "external" {
-    match-clients { !127.0.0.1; !91.151.6.28; any; };
 
-    recursion no;
-    
-    #zone "." { type hint; file "/etc/namedb/named.root"; };
-    
-    dlz "outside" {
-       database "mysql
-       {host=localhost dbname=dns_database user=binduser pass=bind333##rr}
-       {select zone from dns_records where zone = '$zone$' 
-           and zone != '5.168.192.IN-ADDR.ARPA'
-           and zone != '255.255.10.IN-ADDR.ARPA'
-           and zone != 'sys.yourcompany.net'
-           and zone != 'sys.other'}
-       {select ttl, type, mx_priority, case when lower(type)='txt' then concat('\"', data, '\"')
-           when lower(type) = 'soa' then concat_ws(' ', data, resp_person, serial, refresh, retry, expire, minimum)
-           else data end from dns_records where zone = '$zone$' and host = '$record$'
-           and zone != '5.168.192.IN-ADDR.ARPA'
-           and zone != '255.255.10.IN-ADDR.ARPA'
-           and zone != 'sys.yourcompany.net'
-           and zone != 'sys.other'}
-    
-    {}
-       {select ttl, type, host, mx_priority, case when lower(type)='txt' then concat('\"', data, '\"') else data end, 
-       resp_person, serial, refresh, retry, expire, minimum from dns_records where zone = '$zone$' 
-           and zone != '5.168.192.IN-ADDR.ARPA'
-           and zone != '255.255.10.IN-ADDR.ARPA'
-           and zone != 'sys.yourcompany.net'
-           and zone != 'sys.other'}
-       {select zone from xfr_table where zone = '$zone$' and client = '$client$' 
-           and zone != '5.168.192.IN-ADDR.ARPA'
-           and zone != '255.255.10.IN-ADDR.ARPA'
-           and zone != 'sys.yourcompany.net'
-           and zone != 'sys.other'}
-    
-    };
-    };
-    
-    
-    
-    view "internal" {
-    match-clients { 127.0.0.1; 91.151.6.28; };
-    
-    recursion yes;
-    
-    #zone "." { type hint; file "/etc/namedb/named.root"; };
-    dlz "inside" {
-       database "mysql
-       {host=localhost dbname=dns_database user=binduser pass=bind333##rr}
-       {select zone from dns_records where zone = '$zone$'}
-       {select ttl, type, mx_priority, case when lower(type)='txt' then concat('\"', data, '\"')
-            when lower(type) = 'soa' then concat_ws(' ', data, resp_person, serial, refresh, retry, expire, minimum)
-            else data end from dns_records where zone = '$zone$' and host = '$record$'}
-    {}
-       {select ttl, type, host, mx_priority, case when lower(type)='txt' then concat('\"', data, '\"') else data end, 
-       resp_person, serial, refresh, retry, expire, minimum from dns_records where zone = '$zone$'}
-       {select zone from xfr_table where zone = '$zone$' and client = '$client$'}";
-    };
-    };
+example named.conf
+
 
 # Setup systemd
 
@@ -278,6 +125,20 @@ start and check if bind is running:
     systemctl start named.service 
 
     systemctl status named.service 
+
+note:
+
+two scripts are optional:
+
+    ExecStartPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns start"
+    ExecStopPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns stop"
+
+They're added to send notification to sysadmin.
+
+You have to create your own */usr/bin/sysadminmsg* scripts.
+
+Bare in mind that you have to control somehow timeout on the scripts.
+
 
 
 # Setup snort
@@ -312,7 +173,84 @@ set rules (see conf files)
 
 # Setup second server (mysql replication)
 
-TODO
+    rm -rf /var/lib/mysql/*
+
+edit /etc/mysql/my.cnf
+
+    !includedir /etc/mysql/conf.d/
+    !includedir /etc/mysql/mysql.conf.d/
+
+change privs:
+
+    chown -R mysql:mysql /var/lib/mysql
+
+get temp passwd:
+
+    grep pass /var/log/mysql/error.log 
+    2021-06-18T16:37:53.386622Z 1 [Note] A temporary password is generated for root@localhost: qHWy.WcO&1vt
+
+login to mysql and change default root pass:
+
+    alter user root@localhost identified by 'S3cureP##swd';
+    flush privileges;
+
+    reset master
+
+
+
+
+
+**on master:**
+
+allow mysql communication from slave server:
+
+    ufw allow from {slave_ip} to any port 3306 proto tcp
+
+add replication user:
+
+    mysql> GRANT REPLICATION SLAVE ON *.* TO 'replication'@'{slave_ip}' identified by 'R3pl##R3pl##';
+
+create backup:
+
+    mysqldump --all-databases --single-transaction --triggers --routines  -u root -p > /home/repldump.sql
+
+transfer backup to slave:
+
+    scp /home/repldump.sql {slave_ip}:/home
+
+**on slave**
+
+restore backup:
+
+    mysql -u root -p < /home/repldump.sql
+
+
+    CHANGE MASTER TO MASTER_HOST='{master_ip}', MASTER_USER='replication', MASTER_PASSWORD='R3pl##R3pl##', MASTER_PORT=3306, MASTER_AUTO_POSITION = 1;
+
+
+start slave;
+
+on master insert test host and check if is synced with slave:
+
+    mysql> insert into dns_records ( zone, host, type, data, ttl ) VALUES ( 'mysql.dev.null', 'inserttest', 'A', '192.168.12.14', 3600 );
+
+
+on slave check replication status: 
+
+    mysql> SHOW SLAVE STATUs \G
+
+    Slave_IO_Running: Yes
+    Slave_SQL_Running: Yes
+    Slave_SQL_Running_State: Slave has read all relay log; waiting for more updates
+    Retrieved_Gtid_Set: 7abf04e0-d050-11eb-9b09-42077e7fca18:180-182
+    Executed_Gtid_Set: 7abf04e0-d050-11eb-9b09-42077e7fca18:1-182
+
+
+check if both resolving name:
+
+    dig +short @localhost inserttest.mysql.dev.null
+    192.168.12.14
+
 
 
 
