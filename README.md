@@ -1,6 +1,8 @@
 # bind9 with dlz (dynamically loadable zones) in Debian10
 
-This document is description ow to set up auth/cache dns server on debian10, bind 9.11.x with dlz and Mysql backend plus snort and fail2ban. *In this example dnssec is not used.*
+This document is description ow to set up auth/cache dns server on debian10, bind 9.11.x with dlz and Mysql backend plus snort and fail2ban. Zone transfer is achieved by standard MySQL replication.
+
+*In this example dnssec is not used.*
 
 # OS prep
 
@@ -264,6 +266,55 @@ example named.conf
        {select zone from xfr_table where zone = '$zone$' and client = '$client$'}";
     };
     };
+
+# Setup systemd
+
+create /etc/systemd/system/named.service file
+
+start and check if bind is running:
+
+    systemctl daemon-reload
+
+    systemctl start named.service 
+
+    systemctl status named.service 
+
+
+# Setup snort
+
+    apt install snort
+
+    wget https://rules.emergingthreats.net/open/snort-2.9.0/rules/emerging-dns.rules
+
+edit snort.conf and remove (if you want to) unnecessary stuff:
+
+    sed -i '/web-/d' snort.conf 
+    sed -i '/browser-/d' snort.conf 
+    sed -i '/file-/d' snort.conf 
+
+add logging:
+
+    # syslog
+    # output alert_syslog: LOG_AUTH LOG_ALERT
+    output alert_syslog:LOG_ALERT
+
+    systemctl restart snort
+
+test snort with nmap 
+
+# Setup fail2ban
+
+change fail2ban /etc/fail2ban/jail.local to use ufw instead iptables:
+
+    banaction = ufw
+
+set rules (see conf files)
+
+# Setup second server (mysql replication)
+
+TODO
+
+
 
 
 links:
