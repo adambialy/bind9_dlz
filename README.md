@@ -1,14 +1,16 @@
 # bind9 with dlz (dynamically loadable zones) in Debian10
 
-This document is description ow to set up auth/cache dns server on debian10, bind 9.11.x with dlz and Mysql backend plus snort and fail2ban. Zone transfer is achieved by standard MySQL replication.
+This document is description ow to set up auth/cache dns server on debian10, bind 9.11.x with dlz and Mysql backend plus snort and fail2ban. Zone transfer is achieved by standard MySQL GTID replication .
 
 Theoretical situation for this example as follow:
 
 Company dev.null has got domain dev.null registered and two subdomains *sys.dev.null* in 192.168.11.0/24 - for internal communication and *mysql.dev.null* specifically separated network for mysql communication in 192.168.12.0/24.
 
-The two subdomains can not be queried from outside of company as contains information about internal infrastructure.
+The two subdomains can not be queried from outside of company as contains information about internal infrastructure, therefore bind "views" has been configured internal/external. Also server can act as caching dns but only for specific/trusted ip addresses.
 
-*In this example dnssec is not used.*
+As an addition basic ips/ids has been setup based on snort and fail2ban.
+
+*In this example dnssec is not used or compiled.*
 
 # OS prep
 
@@ -141,7 +143,7 @@ add users
 
 # bind install
 
-    [https://ftp.isc.org/isc/bind9/cur/9.11/](https://ftp.isc.org/isc/bind9/cur/9.11/)
+[https://ftp.isc.org/isc/bind9/cur/9.11/](https://ftp.isc.org/isc/bind9/cur/9.11/)
 
     wget https://ftp.isc.org/isc/bind9/cur/9.11/bind-9.11.33.tar.gz
 
@@ -245,7 +247,7 @@ set rules and config:
 
 # Setup second server (mysql replication)
 
-**on master:**
+**on master - first dns server**
 
 allow mysql communication from slave server:
 
@@ -274,6 +276,7 @@ Install mysql as before.
 restore backup:
 
     mysql -u root -p < /home/repldump.sql
+
 
     mysql> reset master
 
@@ -307,6 +310,7 @@ check if slave is connected
 
 
 on master insert test host and check if is synced with slave:
+
     mysql> insert into dns_records ( zone, host, type, data, ttl ) VALUES ( 'mysql.dev.null', 'inserttest', 'A', '192.168.12.14', 3600 );
 
 
@@ -321,8 +325,15 @@ check if both resolving name:
     dig +short @{master_ip} inserttest.mysql.dev.null
     192.168.12.14
 
+#TODO
+
+**ansible playbook to follow**
+
+**scripts**
+
+add/remove records A, AAAA, PTR, CNAME
 
 
-links:
+#Links
 
   * [http://bind-dlz.sourceforge.net/](http://bind-dlz.sourceforge.net/)
