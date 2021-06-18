@@ -275,7 +275,7 @@ Install mysql as before.
 
 restore backup:
 
-    mysql -u root -p < /home/repldump.sql
+`mysql -u root -p < /home/repldump.sql`
 
 
     mysql> reset master
@@ -325,7 +325,7 @@ check if both resolving name:
     dig +short @{master_ip} inserttest.mysql.dev.null
     192.168.12.14
 
-#TODO
+# TODO
 
 **ansible playbook to follow**
 
@@ -333,7 +333,10 @@ check if both resolving name:
 
 add/remove records A, AAAA, PTR, CNAME
 
+**statistics**
 
-#Links
+
+
+# Links
 
   * [http://bind-dlz.sourceforge.net/](http://bind-dlz.sourceforge.net/)
