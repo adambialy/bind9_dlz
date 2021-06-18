@@ -34,14 +34,69 @@ allow dns traffic and switch off logging (unless you want to)
     apt install ./mysql-apt-config_0.8.13-1_all.deb
     dpkg-reconfigure mysql-apt-config
 
-choose version you want (in the example 5.7), set root password
+choose version you want (in the example 5.7)
 
     apt update; apt upgrade
     apt install mysql-community-server apt install mysql-community-client libmysqld-dev libmysqlclient-dev
 
+default installation is not using GTID so scrap it
+
+    systemctl stop mysql
+
+then cleanup
+
+    rm -rf /var/lib/mysql/*
+
+edit /etc/mysql/my.cnf
+
+    !includedir /etc/mysql/conf.d/
+    !includedir /etc/mysql/mysql.conf.d/
+
+copy *mysqld.cnf* into */etc/mysql/mysql.conf.d/*
+
+initialize empty db:
+
+    mysqld --initialize
+
+change files ownership
+
+    chown -R mysql:mysql /var/lib/mysql
+
+get temp passwd:
+
+    grep pass /var/log/mysql/error.log 
+    2021-06-18T16:37:53.386622Z 1 [Note] A temporary password is generated for root@localhost: qHWy.WcO&1vt
+
+login to mysql and change default root pass:
+
+    alter user root@localhost identified by 'S3cureP##swd';
+    flush privileges;
+
+check if GTID is on
+
+    mysql> show global variables like '%gtid%';
+    +----------------------------------+--------------------------------------------+
+    | Variable_name                    | Value                                      |
+    +----------------------------------+--------------------------------------------+
+    | binlog_gtid_simple_recovery      | ON                                         |
+    | enforce_gtid_consistency         | ON                                         |
+    | gtid_executed                    | 7abf04e0-d050-11eb-9b09-42077e7fca18:1-182 |
+    | gtid_executed_compression_period | 1000                                       |
+    | gtid_mode                        | ON                                         |
+    | gtid_owned                       |                                            |
+    | gtid_purged                      |                                            |
+    | session_track_gtids              | OFF                                        |
+    +----------------------------------+--------------------------------------------+
+
+
 **create MySQL structure**
 
+create database
+
     mysql> create database dns_database
+
+create tables
+
     mysql> CREATE TABLE `dns_records` (
     `id` int(11) NOT NULL AUTO_INCREMENT,
     `zone` varchar(255) DEFAULT NULL,
@@ -66,6 +121,16 @@ choose version you want (in the example 5.7), set root password
     KEY `type_index` (`type`(8)),
     KEY `host_index` (`host`(10))
     ) ENGINE=MyISAM AUTO_INCREMENT=8562 DEFAULT CHARSET=latin1
+
+*this one is not actually needed as to for transfer zones we'll using mysql replication.*
+
+    mysql> CREATE TABLE `xfr_table` (
+    `zone` varchar(255) NOT NULL,
+    `client` varchar(255) NOT NULL,
+    KEY `zone` (`zone`),
+    KEY `client` (`client`),
+    KEY `zone_client_index` (`zone`(30),`client`(30))
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8
 
 add users
 
@@ -108,23 +173,25 @@ create directiories
     chown named:named /usr/local/bind ;
     mkdir /usr/local/bind/var/named ;
     chown named:named /usr/local/bind/var/named ;
+    mkdir /etc/named ;
+    ln -s /usr/local/bind/etc/named.conf /etc/named/named.conf ;
     }
 
 
-example named.conf
+see example [named.conf](https://github.com/adambialy/bind9_dlz/blob/main/named.conf)
 
 
 # Setup systemd
 
-create /etc/systemd/system/named.service file
+create [/etc/systemd/system/named.service](https://github.com/adambialy/bind9_dlz/blob/main/named.service)
 
-start and check if bind is running:
+reload systemctl, start and check if bind is running:
 
     systemctl daemon-reload
 
-    systemctl start named.service 
+    systemctl start named.service
 
-    systemctl status named.service 
+    systemctl status named.service
 
 note:
 
@@ -133,12 +200,11 @@ two scripts are optional:
     ExecStartPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns start"
     ExecStopPost=-/bin/bash -c "/usr/bin/sysadminmsg $(hostname) dns stop"
 
-They're added to send notification to sysadmin.
+They're added to send notification to sysadmin when daemon is stopped or started.
 
-You have to create your own */usr/bin/sysadminmsg* scripts.
+You have to create your own */usr/bin/sysadminmsg* scripts mail, slack, whatever...
 
-Bare in mind that you have to control somehow timeout on the scripts.
-
+Bear in mind that you have to control somehow timeout on the script.
 
 
 # Setup snort
@@ -169,36 +235,15 @@ change fail2ban /etc/fail2ban/jail.local to use ufw instead iptables:
 
     banaction = ufw
 
-set rules (see conf files)
+set rules and config:
+
+[snort.conf](https://github.com/adambialy/bind9_dlz/blob/main/snort.conf)
+
+[snort_dns_p1](https://github.com/adambialy/bind9_dlz/blob/main/snort_dns_p1.conf)
+
+[snort_dns_p2](https://github.com/adambialy/bind9_dlz/blob/main/snort_dns_p1.conf)
 
 # Setup second server (mysql replication)
-
-    rm -rf /var/lib/mysql/*
-
-edit /etc/mysql/my.cnf
-
-    !includedir /etc/mysql/conf.d/
-    !includedir /etc/mysql/mysql.conf.d/
-
-change privs:
-
-    chown -R mysql:mysql /var/lib/mysql
-
-get temp passwd:
-
-    grep pass /var/log/mysql/error.log 
-    2021-06-18T16:37:53.386622Z 1 [Note] A temporary password is generated for root@localhost: qHWy.WcO&1vt
-
-login to mysql and change default root pass:
-
-    alter user root@localhost identified by 'S3cureP##swd';
-    flush privileges;
-
-    reset master
-
-
-
-
 
 **on master:**
 
@@ -220,30 +265,49 @@ transfer backup to slave:
 
 **on slave**
 
+allow port 22/tcp on firewall
+
+    ufw allow from {master_ip} to any port 22 proto tcp
+
+Install mysql as before.
+
 restore backup:
 
     mysql -u root -p < /home/repldump.sql
 
+    mysql> reset master
 
-    CHANGE MASTER TO MASTER_HOST='{master_ip}', MASTER_USER='replication', MASTER_PASSWORD='R3pl##R3pl##', MASTER_PORT=3306, MASTER_AUTO_POSITION = 1;
+    mysql> CHANGE MASTER TO MASTER_HOST='{master_ip}', MASTER_USER='replication', MASTER_PASSWORD='R3pl##R3pl##', MASTER_PORT=3306, MASTER_AUTO_POSITION = 1;
 
+    mysql> start slave;
 
-start slave;
-
-on master insert test host and check if is synced with slave:
-
-    mysql> insert into dns_records ( zone, host, type, data, ttl ) VALUES ( 'mysql.dev.null', 'inserttest', 'A', '192.168.12.14', 3600 );
-
-
-on slave check replication status: 
+check replication status:
 
     mysql> SHOW SLAVE STATUs \G
-
+    ...
     Slave_IO_Running: Yes
     Slave_SQL_Running: Yes
+    ...
     Slave_SQL_Running_State: Slave has read all relay log; waiting for more updates
+    ...
     Retrieved_Gtid_Set: 7abf04e0-d050-11eb-9b09-42077e7fca18:180-182
     Executed_Gtid_Set: 7abf04e0-d050-11eb-9b09-42077e7fca18:1-182
+    ...
+
+**on master**
+
+check if slave is connected
+
+    mysql> mysql> show slave hosts;
+    +-----------+------+------+-----------+--------------------------------------+
+    | Server_id | Host | Port | Master_id | Slave_UUID                           |
+    +-----------+------+------+-----------+--------------------------------------+
+    |       102 |      | 3306 |       101 | 8669c7e7-d053-11eb-845d-1abe49ba7455 |
+    +-----------+------+------+-----------+--------------------------------------+
+
+
+on master insert test host and check if is synced with slave:
+    mysql> insert into dns_records ( zone, host, type, data, ttl ) VALUES ( 'mysql.dev.null', 'inserttest', 'A', '192.168.12.14', 3600 );
 
 
 check if both resolving name:
@@ -251,13 +315,14 @@ check if both resolving name:
     dig +short @localhost inserttest.mysql.dev.null
     192.168.12.14
 
+    dig +short @{slave_ip} inserttest.mysql.dev.null
+    192.168.12.14
 
+    dig +short @{master_ip} inserttest.mysql.dev.null
+    192.168.12.14
 
 
 
 links:
 
   * [http://bind-dlz.sourceforge.net/](http://bind-dlz.sourceforge.net/)
-
-
-
