@@ -187,6 +187,15 @@ see example [named.conf](https://github.com/adambialy/bind9_dlz/blob/main/named.
 
 create [/etc/systemd/system/named.service](https://github.com/adambialy/bind9_dlz/blob/main/named.service)
 
+and default file */etc/default/named*
+
+    #
+    OPTIONS="-u named -n 1"
+
+Note, unfortunately only one thread is allowed as mysql driver is not prepared for multithread traffic.
+
+[http://bind-dlz.sourceforge.net/mysql_driver.html http://bind-dlz.sourceforge.net/mysql_driver.html]
+
 reload systemctl, start and check if bind is running:
 
     systemctl daemon-reload
